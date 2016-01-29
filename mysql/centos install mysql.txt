@@ -1,0 +1,297 @@
+CentOS 7的yum源中貌似没有正常安装mysql时的mysql-sever文件，需要去官网上下载
+//如果没有安装wget，会报没有此命令的错误
+yum -y install wget
+或者
+看一下两个命令是否存在：
+ls -l /usr/bin/wget
+ls -l /sbin/ifconfig
+如果存在，说明你的环境变量PATH里没有/sbin和/usr/bin两个路径，增加上：
+
+//centos 7 默认安装的是MariaDB
+MariaDB数据库管理系统是MySQL的一个分支，主要由开源社区在维护，采用GPL授权许可。
+开发这个分支的原因之一是：甲骨文公司收购了MySQL后，有将MySQL闭源的潜在风险，
+因此社区采用分支的方式来避开这个风险。MariaDB的目的是完全兼容MySQL，包括API和命令行，使之能轻松成为MySQL的代替品。
+
+查看当前安装的mariadb包：
+[root@localhadoop ~]# rpm -qa | grep mariadb
+mariadb-libs-5.5.35-3.el7.x86_64
+mariadb-server-5.5.35-3.el7.x86_64
+mariadb-5.5.35-3.el7.x86_64
+[root@localhadoop ~]# 
+使用rpm -e 包名 （都地上面显示）来清除安装包，如果碰到不能报错不能删除，加上参数 --nodeps强制删除即可。
+将它们统统强制性卸载掉：
+[root@localhadoop ~]# rpm -e --nodeps mariadb-libs-5.5.35-3.el7.x86_64
+[root@localhadoop ~]# rpm -e --nodeps mariadb-5.5.35-3.el7.x86_64
+[root@localhadoop ~]# rpm -e --nodeps mariadb-server-5.5.35-3.el7.x86_64
+
+
+export PATH=/usr/bin:/sbin:$PATH
+# wget http://dev.mysql.com/get/mysql-community-release-el7-5.noarch.rpm
+# rpm -ivh mysql-community-release-el7-5.noarch.rpm
+# yum install mysql-community-server
+
+成功安装之后重启mysql服务
+# service mysqld restart
+初次安装mysql是root账户是没有密码的
+设置密码的方法
+# mysql -uroot
+mysql> set password for ‘root’@‘localhost’ = password('mypasswd');
+mysql> exit
+
+
+
+INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'','','Y')
+
+
+
+
+
+mysql 5.7安装
+#源码安装包，官网下载，之前要添加mysql的用户操作
+mysql-5.7.10-linux-glibc2.5-x86_64.tar.gz
+#解压
+ tar -zxvf mysql-5.7.10-linux-glibc2.5-x86_64.tar.gz 
+#重命名，便于mysql操作
+mv mysql-5.7.10-linux-glibc2.5-x86_64 mysql
+#进入目录
+cd mysql
+#创建数据存储文件
+mkdir data
+#最终的文件如下
+bin  COPYING  data  docs  include  INSTALL-BINARY  lib  man  README  share  support-files
+#将文件权限付给mysql，便于专一用户的操作
+chown -R mysql . #授权用户
+chgrp -R mysql . #授权分组
+#mysql初始化，和之前的版本几乎不同，否则会报错，可以根据错误信息修改
+#先安装依赖
+yum install libaio
+#如果英文可以的话，参考官方文档 INSTALL-BINARY，在目录中有
+./bin/mysqld  --initialize --user=mysql --datadir=/usr/local/mysql/data/
+#最新版本中的密码策略已经变更，在执行上面命令成功后的最后一行，会显示打出密码，如下
+2016-01-28T16:40:14.753939Z 1 [Note] A temporary password is generated for root@localhost: Zw5f7(2tgiSW
+#如果需要加密连接的操作，需要执行如下操作
+./bin/mysql_ssl_rsa_setup
+#可以启动mysql操作了，安装就是这么简单
+./bin/mysqld_safe --user=mysql &
+#连接操作，要求输入刚才生成的密码
+ ./bin/mysql -uroot -p
+#鉴于密码的复杂性，测试时可以修改为简单的密码
+mysql> set password for 'root'@'localhost' = password('root');
+Query OK, 0 rows affected, 1 warning (0.00 sec)
+mysql> flush privileges;
+Query OK, 0 rows affected (0.00 sec)
+#接着我们要对mysql进行一些简单的配置
+cd support-files/
+#将mysql的配置信息拷贝到服务启动默认执行的位置
+[root@localhost support-files]# cp my-default.cnf /etc/my.cnf
+#添加mysql的服务启动项
+[root@localhost support-files]# cp mysql.server /etc/init.d/mysqld
+#查看mysql的现有信息
+[root@localhost mysql]# ps -ef |grep mysql
+root      2257  2167  0 00:43 pts/0    00:00:00 /bin/sh ./bin/mysqld_safe --user=mysql
+mysql     2339  2257  0 00:43 pts/0    00:00:01 /usr/local/mysql/bin/mysqld --basedir=/usr/local/mysql --datadir=/
+usr/local/mysql/data --plugin-dir=/usr/local/mysql/lib/plugin --user=mysql --log-error=/usr/local/mysql/data/localhost.localdomain
+root      2380  2167  0 00:50 pts/0    00:00:00 grep --color=auto mysql
+#如果有那些配置信息需要做调整，我们就可以在/etc/my.cnf中修改和添加
+
+#添加mysql服务
+[root@localhost init.d]# chkconfig --add mysqld
+#启动服务
+service mysqld start
+#添加新用户--添加数据库
+mysql> create database test;
+#添加用户并授权，%代表所有的地址都可以请求
+mysql> grant all privileges on test.* to 'test'@'%' identified by 'test';
+Query OK, 0 rows affected, 1 warning (0.00 sec)
+mysql> flush privileges;
+Query OK, 0 rows affected (0.00 sec)
+
+
+#配置主从集群，在主集群上添加用户，提供其他节点读取和操作
+mysql> create user repl;
+#repl用户必须具有REPLICATION SLAVE权限，除此之外没有必要添加不必要的权限，密码为mysql。
+#说明一下192.168.86.%，这个配置是指明repl用户所在服务器，这里%是通配符，
+#表示192.168.86.0-192.168.86.255的Server都可以以repl用户登陆主服务器。当然你也可以指定固定Ip。
+#授权
+mysql> grant replication slave on *.* to 'repl'@'192.168.86.%' identified by 'mysql';
+Query OK, 0 rows affected, 1 warning (0.00 sec)
+#在启动配置文件中加入要扫描的日志，根据日志进行数据同步
+server-id=1503306#自定义，习惯用ip的后位加端口号
+log-bin=master-bin
+log-bin-index=master-bin.index
+#重启服务执行命令看
+mysql> show master status;
++-------------------+----------+--------------+------------------+-------------------+
+| File              | Position | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
++-------------------+----------+--------------+------------------+-------------------+
+| master-bin.000001 |      154 |              |                  |                   |
++-------------------+----------+--------------+------------------+-------------------+
+1 row in set (0.00 sec)
+#主服务暂时配置完成
+
+#配置从服务
+#修改my.cnf文件，使用同步技术
+basedir =/usr/local/mysql
+datadir =/usr/local/mysql/data
+port =3306
+server_id =1513306
+# socket = .....
+relay_log=slave-relay-bin
+relay_log_index=slave-relay-bin.index
+#重启服务并进入操作
+mysql> change master to master_host='192.168.86.150',
+    -> master_port=3306,
+    -> master_user='repl',
+    -> master_password='mysql',
+    -> master_log_file='master-bin.000001',
+    -> master_log_pos=154;
+Query OK, 0 rows affected, 2 warnings (0.02 sec)
+
+mysql> start slave;
+Query OK, 0 rows affected (0.02 sec)
+#在从库中查看状态
+mysql> show slave status\G
+*************************** 1. row ***************************
+               Slave_IO_State: Waiting for master to send event
+                  Master_Host: 192.168.86.150
+                  Master_User: repl
+                  Master_Port: 3306
+                Connect_Retry: 60
+              Master_Log_File: master-bin.000001
+          Read_Master_Log_Pos: 623
+               Relay_Log_File: slave-relay-bin.000002
+                Relay_Log_Pos: 790
+        Relay_Master_Log_File: master-bin.000001
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+              Replicate_Do_DB: 
+          Replicate_Ignore_DB: 
+           Replicate_Do_Table: 
+       Replicate_Ignore_Table: 
+      Replicate_Wild_Do_Table: 
+  Replicate_Wild_Ignore_Table: 
+                   Last_Errno: 0
+                   Last_Error: 
+                 Skip_Counter: 0
+          Exec_Master_Log_Pos: 623
+              Relay_Log_Space: 997
+              Until_Condition: None
+               Until_Log_File: 
+                Until_Log_Pos: 0
+           Master_SSL_Allowed: No
+           Master_SSL_CA_File: 
+           Master_SSL_CA_Path: 
+              Master_SSL_Cert: 
+            Master_SSL_Cipher: 
+               Master_SSL_Key: 
+        Seconds_Behind_Master: 0
+Master_SSL_Verify_Server_Cert: No
+                Last_IO_Errno: 0
+                Last_IO_Error: 
+               Last_SQL_Errno: 0
+               Last_SQL_Error: 
+  Replicate_Ignore_Server_Ids: 
+             Master_Server_Id: 1503306
+                  Master_UUID: 8ecdb1ec-c5d1-11e5-b03b-005056214d50
+             Master_Info_File: /usr/local/mysql/data/master.info
+                    SQL_Delay: 0
+          SQL_Remaining_Delay: NULL
+      Slave_SQL_Running_State: Slave has read all relay log; waiting for more updates
+           Master_Retry_Count: 86400
+                  Master_Bind: 
+      Last_IO_Error_Timestamp: 
+     Last_SQL_Error_Timestamp: 
+               Master_SSL_Crl: 
+           Master_SSL_Crlpath: 
+           Retrieved_Gtid_Set: 
+            Executed_Gtid_Set: 
+                Auto_Position: 0
+         Replicate_Rewrite_DB: 
+                 Channel_Name: 
+           Master_TLS_Version: 
+1 row in set (0.00 sec)
+
+
+#在主库中操作
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
+| test               |
++--------------------+
+5 rows in set (0.01 sec)
+
+mysql> use test;
+Reading table information for completion of table and column names
+You can turn off this feature to get a quicker startup with -A
+
+Database changed
+mysql> create table city (id varchar(40) not null,
+    -> name varchar(100));
+Query OK, 0 rows affected (0.03 sec)
+
+mysql> insert into city values ('001','beijing');
+Query OK, 1 row affected (0.03 sec)
+
+mysql> select * from city;
++-----+---------+
+| id  | name    |
++-----+---------+
+| 001 | beijing |
++-----+---------+
+1 row in set (0.00 sec)
+
+mysql> 
+
+#在从库中查询
+mysql> use test;
+Database changed
+mysql> show tables;
+Empty set (0.00 sec)
+
+mysql> show tables;
++----------------+
+| Tables_in_test |
++----------------+
+| city           |
++----------------+
+1 row in set (0.00 sec)
+
+mysql> select * from city;
++-----+---------+
+| id  | name    |
++-----+---------+
+| 001 | beijing |
++-----+---------+
+1 row in set (0.00 sec)
+
+#到此主从复制简单工程已完成
+1.复制线程状态
+　　通过show slave status\G和show master status可以查看复制线程状态。常见的线程状态有：
+（1）主服务器Binlog Dump线程
+Has sent all binlog to slave; waiting for binlog to be updated
+线程已经从二进制日志读取所有主要的更新并已经发送到了从服务器。线程现在正空闲，等待由主服务器上新的更新导致的出现在二进制日志中的新事件。
+
+（2）从服务器I/O线程状态
+Waiting for master to send event
+线程已经连接上主服务器，正等待二进制日志事件到达。如果主服务器正空闲，会持续较长的时间。如果等待持续slave_read_timeout秒，则发生超时。
+此时，线程认为连接被中断并企图重新连接。
+
+（3）从服务器SQL线程状态
+Reading event from the relay log
+线程已经从中继日志读取一个事件，可以对事件进行处理了。
+Has read all relay log; waiting for the slave I/O thread to update it
+线程已经处理了中继日志文件中的所有事件，现在正等待I/O线程将新事件写入中继日志。
+
+2.复制过程中使用的传递和状态文件
+　　默认情况，中继日志使用host_name-relay-bin.nnnnnn形式的文件名，其中host_name是从服务器主机名，nnnnnn是序列号。
+	中继日志与二进制日志的格式相同，并且可以用mysqlbinlog读取。
+　　从服务器在data目录中另外创建两个小文件。这些状态文件默认名为主master.info和relay-log.info。
+	状态文件保存在硬盘上，从服务器关闭时不会丢失。
+	下次从服务器启动时，读取这些文件以确定它已经从主服务器读取了多少二进制日志，以及处理自己的中继日志的程度。
+
+

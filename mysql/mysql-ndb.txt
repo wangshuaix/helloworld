@@ -1,0 +1,146 @@
+Installing a MySQL Cluster Binary Release on Linux
+	(mysql-cluster-gpl-7.3.9-linux-i686-glibc23.tar.gz or mysql-cluster-gpl-7.4.4-linux-i686-glibc23.tar.gz)
+	
+SQL nodes.  On each of the machines designated to host SQL nodes, perform the following steps as
+	the system root user:	
+	
+	1,perform the following steps as the system root user:
+	Check your /etc/passwd and /etc/group files (or use whatever tools are provided by your
+		operating system for managing users and groups) to see whether there is already a mysql group
+		and mysql user on the system.If they are not already present, create a new mysql user group, and then add a
+		mysql user to this group:
+	shell> groupadd mysql
+	shell> useradd -g mysql mysql
+	
+	2. Change location to the directory containing the downloaded file, unpack the archive, and create a
+		symbolic link named mysql to the mysql directory
+	shell> cd /var/tmp
+	shell> tar -C /usr/local -xzvf mysql-cluster-gpl-7.4.4-linux2.6.tar.gz
+	shell> ln -s /usr/local/mysql-cluster-gpl-7.4.4-linux2.6-i686 /usr/local/mysql
+	
+	3. Change location to the mysql directory and run the supplied script for creating the system databases:
+	shell> cd mysql
+	shell> scripts/mysql_install_db --user=mysql
+	
+	4. Set the necessary permissions for the MySQL server and data directories
+	shell> chown -R root .
+	shell> chown -R mysql data
+	shell> chgrp -R mysql .
+	
+	5. Copy the MySQL startup script to the appropriate directory, make it executable, and set it to start when
+		the operating system is booted up
+	shell> cp support-files/mysql.server /etc/rc.d/init.d/
+	shell> chmod +x /etc/rc.d/init.d/mysql.server
+	shell> chkconfig --add mysql.server
+	(The startup scripts directory may vary depending on your operating system and version¡ªfor example,
+		in some Linux distributions, it is /etc/init.d.)
+	Here we use Red Hat's chkconfig for creating links to the startup scripts; use whatever means is
+		appropriate for this purpose on your platform, such as update-rc.d on Debian.
+
+	Remember that the preceding steps must be repeated on each machine where an SQL node is to reside.
+	
+Data nodes.  Installation of the data nodes does not require the mysqld binary. Only the MySQL Cluster
+	data node executable ndbd (single-threaded) or ndbmtd (multi-threaded) is required. These binaries can
+	also be found in the .tar.gz archive. Again, we assume that you have placed this archive in /var/tmp	
+	
+	As system root (that is, after using sudo, su root, or your system's equivalent for temporarily assuming
+		the system administrator account's privileges), perform the following steps to install the data node binaries
+		on the data node hosts:
+	1. Change location to the /var/tmp directory, and extract the ndbd and ndbmtd binaries from the
+		archive into a suitable directory such as /usr/local/bin
+	shell> cd /var/tmp
+	shell> tar -zxvf mysql-5.6.23-ndb-7.4.4-linux-i686-glibc23.tar.gz
+	shell> cd mysql-5.6.23-ndb-7.4.4-linux-i686-glibc23
+	shell> cp bin/ndbd /usr/local/bin/ndbd
+	shell> cp bin/ndbmtd /usr/local/bin/ndbmtd
+	
+	2. Change location to the directory into which you copied the files, and then make both of them
+		executable
+	shell> cd /usr/local/bin
+	shell> chmod +x ndb*
+	
+	The preceding steps should be repeated on each data node host.
+	
+Management nodes.  Installation of the management node does not require the mysqld binary.
+	Only the MySQL Cluster management server (ndb_mgmd) is required; you most likely want to install the
+	management client (ndb_mgm) as well. Both of these binaries also be found in the .tar.gz archive.
+	Again, we assume that you have placed this archive in /var/tmp
+	
+	As system root, perform the following steps to install ndb_mgmd and ndb_mgm on the management node host:
+	
+	1. Change location to the /var/tmp directory, and extract the ndb_mgm and ndb_mgmd from the archive
+		into a suitable directory such as /usr/local/bin
+	shell> cd /var/tmp
+	shell> tar -zxvf mysql-5.6.23-ndb-7.4.4-linux2.6-i686.tar.gz
+	shell> cd mysql-5.6.23-ndb-7.4.4-linux2.6-i686
+	shell> cp bin/ndb_mgm* /usr/local/bin
+	
+	2. Change location to the directory into which you copied the files, and then make both of them executable:
+	shell> cd /usr/local/bin
+	shell> chmod +x ndb_mgm*
+	
+	
+Installing MySQL Cluster from RPM
+
+	Data nodes.  On a computer that is to host a cluster data node it is necessary to install only the server
+		RPM. To do so, copy this RPM to the data node host, and run the following command as the system root
+		user, replacing the name shown for the RPM as necessary to match that of the RPM downloaded from the
+		MySQL web site
+	shell> rpm -Uhv MySQL-Cluster-server-gpl-7.3.9-1.sles11.i386.rpm
+	Although this installs all MySQL Cluster binaries, only the program ndbd or ndbmtd (both in /usr/sbin)
+		is actually needed to run a MySQL Cluster data node.
+		
+	SQL nodes.  On each machine to be used for hosting a cluster SQL node, install the server RPM
+		by executing the following command as the system root user, replacing the name shown for the RPM as
+		necessary to match the name of the RPM downloaded from the MySQL web site:
+	shell> rpm -Uhv MySQL-Cluster-server-gpl-7.3.9-1.sles11.i386.rpm
+	This installs the MySQL server binary (mysqld) with NDB storage engine support in the /usr/sbin
+		directory, as well as all needed MySQL Server support files. It also installs the mysql.server and
+		mysqld_safe startup scripts (in /usr/share/mysql and /usr/bin, respectively). The RPM installer
+		should take care of general configuration issues (such as creating the mysql user and group, if needed)
+		automatically
+	To administer the SQL node (MySQL server), you should also install the client RPM, as shown here:
+	shell> rpm -Uhv MySQL-Cluster-client-gpl-7.3.9-1.sles11.i386.rpm
+	
+	Management nodes.  To install the MySQL Cluster management server, it is necessary only to use the
+		server RPM. Copy this RPM to the computer intended to host the management node, and then install
+		it by running the following command as the system root user (replace the name shown for the RPM as
+		necessary to match that of the server RPM downloaded from the MySQL web site):
+	shell> rpm -Uhv MySQL-Cluster-server-gpl-7.3.9-1.sles11.i386.rpm
+	Although this RPM installs many other files, only the management server binary ndb_mgmd (in the /
+		usr/sbin directory) is actually required for running a management node. The server RPM also installs
+		ndb_mgm, the NDB management client
+		
+		
+		
+WINDOWS	
+Create a new text file using a text editor such as Notepad, and input the following information:
+[ndbd default]
+# Options affecting ndbd processes on all data nodes:
+NoOfReplicas=2 # Number of replicas
+DataDir=C:/mysql/cluster-data # Directory for each data node's data files
+								# Forward slashes used in directory path,
+								# rather than backslashes. This is correct;
+								# see Important note in text
+DataMemory=80M # Memory allocated to data storage
+IndexMemory=18M # Memory allocated to index storage
+					# For DataMemory and IndexMemory, we have used the
+					# default values. Since the "world" database takes up
+					# only about 500KB, this should be more than enough for
+					# this example Cluster setup.
+[ndb_mgmd]
+# Management process options:
+HostName=192.168.0.10 # Hostname or IP address of management node
+DataDir=C:/mysql/bin/cluster-logs # Directory for management node log files
+[ndbd]
+# Options for data node "A":
+ # (one [ndbd] section per data node)
+HostName=192.168.0.30 # Hostname or IP address
+[ndbd]
+# Options for data node "B":
+HostName=192.168.0.40 # Hostname or IP address
+[mysqld]
+# SQL node options:
+HostName=192.168.0.20 # Hostname or IP address
+
+Save this file as the plaintext file C:\mysql\bin\config.ini
