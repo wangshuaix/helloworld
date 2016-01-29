@@ -1,0 +1,875 @@
+介绍：想整合一个测试hadoop系列的集群
+hadoop,zookeeper,hive,hbase
+pig,sqoop,spark,oozie
+
+
+目前准备的环境：
+namenode:192.168.86.130//用作主集群
+datanode1：192.168.86.131//用作数据集群
+datanode2：192.168.86.132//用作数据集群
+
+dbnode:192.168.86.135//hive等相关的mysql安装机器
+
+一：hadoop
+hadoop就是我们最基本的集群架构，包含我们用到的hdfs的文件系统和分布式计算的mapredurce架构
+
+1，系统采用的是centos7 64位操作系统，每个机器采用的是静态地址模式
+注：修改系统配置的时候，要用root用户，操作hadoop是切换到hadoop账户
+cd /etc/sysconfig/network-scripts
+看到一个后面有一段数字的文件，然后编辑它
+vi ifcfg-eno16777728
+修改的地方主要有以下几点：
+TYPE="Ethernet"
+BOOTPROTO="none"
+DEFROUTE="yes"
+IPV4_FAILURE_FATAL="no"
+IPV6INIT="yes"
+IPV6_AUTOCONF="yes"
+IPV6_DEFROUTE="yes"
+IPV6_FAILURE_FATAL="no"
+NAME="eno16777728"
+UUID="e1fe4901-88e6-40b9-941a-934afb41ae8a"
+ONBOOT="yes"
+HWADDR="00:50:56:21:4D:15"//mark地址--每台电脑需要修改
+IPADDR0="192.168.86.130"//本机地址--每台电脑需要修改
+PREFIX0="24"
+GATEWAY0="192.168.86.2"//网关
+DNS1="192.168.86.2"//dns地址
+IPV6_PEERDNS="yes"
+IPV6_PEERROUTES="yes"
+
+为了防止以后出现不必要的错误，需要同步几台机器的时间
+查看当前时区：date -R  
+date -s "2014-12-05 17:39:40"//确保不要相差太多
+
+需要求改每台机器的主机名
+vi /etc/hostname
+将loalhost修改为当前分配的主机名称（namenode）
+
+防止安装hadoop相关框架时出现报错的现象，关闭防火墙
+systemctl stop firewalld.service//关闭的命令
+systemctl disable firewalld.service//禁用防火墙开机启动的命令
+
+2，安装jdk
+搜索JDK开发环境，注：做系统修改和操作是，一定要切换到root用户
+yum search jdk
+从查找的结果中找到一个适合自己机器的版本来安装，此命令需要联网
+yum install java-1.7.0-openjdk-devel.x86_64//因为相关的hbase和zookeeper需要1.7+，根据安装版本不同而选择
+
+3，安装hadoop
+首先是选择一个文件夹，更改文件夹宿主，给hadoop写入权限
+chown hadoop:hadoop /usr/local
+安装包上传至 /usr/local
+此时我选择的工具是flashfxp工具进行的相关操作
+
+开始解压安装
+cd /usr/local
+tar -zxvf hadoop-2.5.1.tar.gz
+将java环境变量添加到系统的配置文件中
+vi /etc/profile
+追加内容如下：（根据自己的路径来修改相关的内容）需要root
+#set java
+export JAVA_HOME=/usr/lib/jvm/java
+export JRE_HOME=$JAVA_HOME/jre
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+
+#set hadoop
+export HADOOP_HOME=/usr/local/hadoop-2.5.1
+export HADOOP_CONF_DIR=/usr/local/hadoop-2.5.1/etc/hadoop
+export YARN_CONF_DIR=/usr/local/hadoop-2.5.1/etc/hadoop
+export PATH=$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$PATH
+
+在线激活环境变量 
+chmod +x /etc/profile 
+source /etc/profile 
+
+建立hdfs相关目录  
+mkdir -p /home/hadoop/hd_space/tmp （hadoop的临时数据目录
+mkdir -p /home/hadoop/hd_space/hdfs/name （hadoop的主机器的数据存放
+mkdir -p /home/hadoop/hd_space/hdfs/data （hadoop的数据机器的数据存放
+mkdir -p /home/hadoop/hd_space/mapred/local （mapreduce的本地数据目录
+mkdir -p /home/hadoop/hd_space/mapred/system （mapreduce的系统数据目录
+chown -R hadoop:hadoop /home/hadoop/hd_space/ （看完不是后再操作）
+chown -R hadoop:hadoop /usr/local/hadoop-2.5.1（看完不是后再操作）
+
+修改每台机器的hadoop主机名操作关系
+使用root用户登录
+vi /etc/hosts（修改内容，根据自己的不同来修改
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.86.130 namenode
+192.168.86.131 datanode1
+192.168.86.132 datanode2
+
+建立每台机器之间的互信，很重要，用hadoop用户操作
+ssh-keygen -t rsa  
+中途采用默认值（三次回车）
+在datanode1登录hadoop用户 scp /home/hadoop/.ssh/id_rsa.pub \  
+hadoop@namenode:/home/hadoop/.ssh/id_rsa.pub.datanode1 （将datanode1上的密码文件发送到namenode上
+在datanode2登录hadoop用户 scp /home/hadoop/.ssh/id_rsa.pub \ 
+hadoop@namenode:/home/hadoop/.ssh/id_rsa.pub.datanode2 （将datanode2上的密码文件发送到namenode上
+整合所有的密码文件，然后再拷贝到其他的机器上，为了建立免密码登录
+在namenode登录hadoop用户 
+cd /home/hadoop/.ssh/ 
+ll  
+cat id_rsa.pub >> authorized_keys  
+cat id_rsa.pub.datanode1 >> authorized_keys 
+cat id_rsa.pub.datanode2 >> authorized_keys 
+chmod 644 ~/.ssh/authorized_keys
+scp ~/.ssh/authorized_keys hadoop@datanode1:/home/hadoop/.ssh/authorized_keys
+scp ~/.ssh/authorized_keys hadoop@datanode2:/home/hadoop/.ssh/authorized_keys
+最后在各各机器山测试ssh的连接
+
+4，配置hadoop
+hadoop的配置文件的默认路径  
+/usr/local/hadoop-2.5.1/etc/hadoop 
+编辑hadoop-env.sh 
+export JAVA_HOME=/usr/lib/jvm/java //添加对应的java环境变量
+编辑yarn-env.sh
+export JAVA_HOME=/usr/lib/jvm/java //添加对应的java环境变量
+
+编辑core-site.xml
+<property>
+		<name>fs.defaultFS</name>
+		<value>hdfs://namenode:9000</value> //此处要记住，默认是namenode的9000端口，以后添加hbase时也要用此端口
+</property>
+<property>
+		<name>hadoop.tem.dir</name>
+		<value>file:///home/hadoop/hd_space/tmp</value> //hadoop的临时文件目录
+</property>
+
+编辑hdfs-site.xml
+<property>
+		<name>dfs.name.dir</name>
+		<value>file:///home/hadoop/hd_space/name</value> //hdfs的name数据
+</property>
+<property>
+		<name>dfs.data.dir</name>
+		<value>file:///home/hadoop/hd_space/data</value> //hdfs的数据
+</property>
+<property>
+		<name>dfs.replication</name> //分布式的设置，每份文件存2份
+		<value>2</value>
+</property>
+<property>
+		<name>dfs.namenode.secondary.http-address</name> //yarn开始的第二主机，备用
+		<value>datanode1:50090</value>
+</property>
+<property>
+		<name>dfs.namenode.secondary.https-address</name> //yarn开始的第二主机，备用
+		<value>datanode1:50091</value>
+</property>
+
+//如果是在windows上进行测试开发的话，需要配置namenode上的文件，取消验证信息
+<property>
+	<name>dfs.permissions</name>
+	<value>false</value>
+</property>
+<property>
+	<name>dfs.web.ugi</name>
+	<value>wangsx,supergroup</value>
+</property>
+
+编辑mapred-site.xml
+<property>
+		<name>mapreduce.cluster.local.dir</name>
+		<value>/home/hadoop/hd_space/mapred/local</value>
+</property>
+<property>
+		<name>mapreduce.cluster.system.dir</name>
+		<value>/home/hadoop/hd_space/mapred/system</value>
+</property>
+<property>
+		<name>mapreduce.framework.name</name> //调用的管理层框架是yarn
+		<value>yarn</value>
+</property>
+<property>
+		<name>mapreduce.jobhistory.address</name>
+		<value>namenode:10020</value>
+</property>
+<property>
+		<name>mapreduce.jobhistory.webapp.address</name>
+		<value>namenode:19888</value>
+</property>
+
+编辑yarn-site.xml
+<property>
+		<name>yarn.resourcemanager.hostname</name> //设置主管理域
+		<value>namenode</value>
+</property>
+<property>
+		<name>yarn.nodemanager.aux-services</name> //设置用户可以自定义一些服务，比如负荷
+		<value>mapreduce_shuffle</value>
+</property>
+
+修改slaves //被管服务器
+datanode1 datanode2
+
+可以先在一台机器上操作上面的操作，然后远程复制到对应的其他机器上
+scp -r /usr/local/hadoop-2.5.1/etc/hadoop $target:/usr/local/hadoop-2.5.1/etc
+ scp -r hbase-0.99.2/ datanode1:/usr/local/hadoop-2.5.1/
+
+5，启动hadoop
+第一次启动一定要记住在namenode节点进行格式化操作，否则要做大量的补救工作
+hdfs namenode -format
+待成功后进行相应的启动
+start-dfs.sh //启动dfs
+start-yarn.sh //启动yarn
+或者是执行sbin中的start-all.sh，从控制台可以看出，它也是先启动start-dfs.sh然后start-yarn.sh
+熟悉shell的可以看下对应的启动文件
+
+确保自己的操作结果，可以去前端的web看下
+http://192.168.86.130:50070
+http://192.168.86.130:8088
+http://192.168.86.130:19888/jobhistory
+
+如果中间有错，切莫着急，首先是查看日志文件
+/usr/local/hadoop-2.5.1/logs
+
+也可以通过jps来查看每台机器启动的进程
+简单的测试下hadoop的操作：
+hadoop hdfs -mkdir /test （建立相应的目录，注是在跟节点
+hadoop fs -ls -R / （这样可以递归的查看跟目录下的所有信息，此步只是在刚开始的操作，后来数据大的时候很少用
+
+echo "My first hadoop example. Hello Hadoop in input. " > testfile.txt （找一个目录生成一个文件，我们测试mapreduce功能
+hadoop hdfs -put testfile.txt /test
+hadoop jar /usr/local/hadoop-2.5.1/share/hadoop/mapreduce/hadoop-mapreduce-examples-2.5.1.jar wordcount /test/testfile.txt /test/output
+hadoop dfs -cat /test/output/part-r-00000 （查看执行的结果
+
+hadoop启动的时候可能进入安全模式，此时是不能对hadoop进行操作的，
+hadoop dfsadmin -safemode get 来查看是否是安全模式
+hadoop dfsadmin -safemode leave 强行离开安全模式
+
+如果format的次数比较多，可能会出现datanode无法启动的现象，此时要检查VERSION文件中的内容是否相同
+当然你也看以查看对应的log文件来进行诊断问题和修改内容
+
+
+二：hive
+hive就是我们的平时常用的数据仓库系统，此时我们做数据存储，然后存储在hdfs上，并且是分布式的，做大数据的分析使用
+
+hive的操作需要保存源数据，为了更好的操作，建议保存在mysql等相应的数据库中
+我们建立一个dbnode，根据自己的情况来操作，也可不必（本人为了区分功能这样做
+1，安装mysql
+CentOS 7的yum源中貌似没有正常安装mysql时的mysql-sever文件
+查看是否有mysql的相关信息
+yum list installed | grep mysql
+yum list | grep mysql
+如果没有则需要下载相应的安装，本人采用rpm
+wget http://dev.mysql.com/get/mysql-community-release-el7-5.noarch.rpm
+此时可能会报错，没有wget的命令，需要安装wget的包
+yum install gcc-c++ （根据需要安装
+yum -y install wget
+wget http://dev.mysql.com/get/mysql-community-release-el7-5.noarch.rpm
+会有下载的进度条提示，等下载完后再继续操作
+rpm -ivh mysql-community-release-el7-5.noarch.rpm 
+yum install mysql-community-server （安装mysql，里面有很多，我要的是所有的安装
+
+成功安装之后重启mysql服务
+service mysqld restart
+# service mysqld restart
+初次安装mysql是root账户是没有密码的
+设置密码的方法
+# mysql -uroot
+mysql> set password for ‘root’@‘localhost’ = password('root');
+
+为hive建立对应的账户信息
+mysql>CREATE USER 'hive'@'localhost' IDENTIFIED BY 'hive';
+为了使其远程访问
+mysql>UPDATE USER SET HOST = '%' WHERE USER = 'hive';
+授权
+mysql>GRANT ALL PRIVILEGES ON *.* TO 'hive'@'%' IDENTIFIED BY 'hive' WITH GRANT OPTION;
+mysql>FLUSH PRIVILEGES;
+然后再其他机器上远程连接mysql试下，我是windows用ssh连接后进行的测试
+需要将对应的java连接jar包放到hive的对应lib下
+
+2，安装hive
+hive并非是所有机器上需要，是在你经常连接的一个机器上安装，并操作相应的hdfs的数据和mapredurce的功能
+我选用的版本是：apache-hive-0.14.0-bin
+
+修改配置文件：hive的默认文件路径
+/usr/local/hadoop-2.5.1/apache-hive-0.14.0-bin/conf
+编辑hive-env.sh 
+export HADOOP_HEAPSIZE=1024
+HADOOP_HOME=/usr/local/hadoop-2.5.1
+export HIVE_CONF_DIR=/usr/local/hadoop-2.5.1/apache-hive-0.14.0-bin/conf
+export HIVE_AUX_JARS_PATH=/usr/local/hadoop-2.5.1/apache-hive-0.14.0-bin/lib
+
+编辑hive-site.xml （简单配置，需要精确配置参考官方文档
+<property>
+	<name>hive.exec.scratchdir</name>
+	<value>/home/hadoop/hd_space/hive/tmp</value> //hdfs上的文件路径，自动创建
+</property>
+<property>
+	<name>hive.metastore.warehouse.dir</name>
+	<value>/home/hadoop/hd_space/hive/warehouse</value> //hdfs上的文件路径，自动创建
+</property>
+<property>
+	<name>javax.jdo.option.ConnectionPassword</name>
+	<value>hive</value>
+	<description>password to use against metastore database</description>
+</property>
+<property>
+	<name>javax.jdo.option.ConnectionURL</name>
+	<value>jdbc:mysql://192.168.86.135:3306/hive?createDatabaseIfNotExist=true</value>
+	<description>JDBC connect string for a JDBC metastore</description>
+</property>
+<property>
+	<name>javax.jdo.option.ConnectionDriverName</name>
+	<value>com.mysql.jdbc.Driver</value>
+	<description>Driver class name for a JDBC metastore</description>
+</property>
+<property>
+	<name>javax.jdo.option.ConnectionUserName</name>
+	<value>hive</value>
+	<description>Username to use against metastore database</description>
+</property>
+<property>
+	<name>hive.querylog.location</name>
+	<value>/home/hadoop/hd_space/hive/log</value> //hdfs上的文件路径，自动创建
+	<description>Location of Hive run time structured log file</description>
+</property>
+
+3，登陆测试hive的shell命令
+hive
+第一次登陆比较慢，要初始化很多东西，在mysql中创建数据库和对应的表
+hive> （成功的显示
+可以测试对应的hive操作，有时语句的执行要用到mapredurce
+
+set hive.cli.print.current.db=true;
+create external table weblogs(
+md5 string,
+url string,
+req_date string,
+req_time string,
+ip string)
+row format delimited fields terminated by '\t' lines terminated by '\n'
+location '/input/weblog/';
+create table weblogs_url_length as
+select url,req_date,req_time,length(url) as url_length from weblogs;
+select * from weblogs_url_length limit 10;
+select concat_ws('_',req_date,req_time) from weblogs limit 10;
+show tables;
+load data local inpath '/usr/local/hadoop-2.5.1/hadoop-data/ip_to_country.txt' overwrite into table ip_to_country;
+
+
+三，zookeeper的安装
+zookeeper是我们常用的分布式系统保持数据一致的架构思想，也就是我们常说的数据事物一致性
+
+我使用的版本是： zookeeper-3.4.6
+1，下载并解压相应的zookeeper的按转包，我的统一使用方法是：其他的包都在hadoop的路径下
+zookeeper的安装相对简单：
+/usr/local/hadoop-2.5.1/zookeeper-3.4.6/conf
+将zoo_sample.cfg的文件复制一份重命名为zoo.cfg
+# The number of milliseconds of each tick
+tickTime=2000
+# The number of ticks that the initial 
+# synchronization phase can take
+initLimit=10
+# The number of ticks that can pass between 
+# sending a request and getting an acknowledgement
+syncLimit=5
+# the directory where the snapshot is stored.
+# do not use /tmp for storage, /tmp here is just 
+# example sakes.
+dataDir=/usr/local/hadoop-2.5.1/zookeeper-3.4.6/zkdata
+# 上面地址很重要，和下面的server.1有关系，否则无法启动，你可以根据自己的需求设置这个路径
+# the port at which the clients will connect
+clientPort=2181
+
+#下面的server.1，需要在自己所有机器的对应文件夹下手动创建myid的文件
+server.1=namenode:2888:3888
+server.2=datanode1:2888:3888
+server.3=datanode2:2888:3888
+
+创建myid的命令如下：
+echo "1" > /usr/local/hadoop-2.5.1/zookeeper-3.4.6/zkdata/myid
+上面的1要和你server后面的数据保持一致，否则启动有问题
+
+为了启动方便，将当前的bin放在path中
+#set zookeeper
+export ZOOKEEPER_HOME=/usr/local/hadoop-2.5.1/zookeeper-3.4.6
+export PATH=$PATH:$ZOOKEEPER_HOME/bin
+
+
+2，然后拷贝文件到相应集群的其他位置上，并且对应的建立相应的myid，一定要确保myid里面的内容和server后面的数字相同
+并分别在相应的机器上添加启动的path路径信息
+
+3，测试启动
+zkServer.sh start 启动zookeeper
+分别启动集群上的所有zookeeper，测试当前机器所处的地位
+zkServer.sh status
+[hadoop@namenode ~]$ zkServer.sh status
+JMX enabled by default
+Using config: /usr/local/hadoop-2.5.1/zookeeper-3.4.6/bin/../conf/zoo.cfg
+Mode: follower
+[hadoop@namenode ~]$ 
+
+
+安装zookeeper的目的就是为了下面安装hbase
+
+
+四，hbase
+hbase的存在就是我们在nosql中的应用，分布式数据库，是列式数据的代表
+
+hbase-0.99.2 ，下载相应的hbase，并且要保证hbase的hadoop的版本和正在运行的hadoop版本一样
+所以我安装hadoop时是先下载hbase，看里面对应的hadoop版本，然后找对应的hadoop版本下载安装
+1，修改配置文件
+/usr/local/hadoop-2.5.1/hbase-0.99.2/conf
+
+hbase-env.sh
+export JAVA_HOME=/usr/lib/jvm/java/
+export HBASE_MANAGES_ZK=false
+#上面fasle的意思是不用hbase自带的zookeeper，使用我们安装的zookeeper
+
+//当你碰到hbase启动不全，或者启动一会就有机子宕机的情况，执行停止的时候发现无法停止，找不到***.pid的情况
+//需要在上面的配置文件中找到,并且建立路径，付给hadoop的权限，也许会有hadoop和yarn等的错误，添加相应的位置
+export HBASE_PID_DIR=/usr/local/hadoop-2.5.1/hbase-0.99.2/hpid
+
+
+hbase-site.xml
+<property>
+		<name>hbase.cluster.distributed</name> //分布式
+		<value>true</value>
+</property>
+<property >
+		<name>hbase.tmp.dir</name> //临时文件目录，我使用的是本地，你可以用集群或者本地，手动创建
+		<value>file:///home/hadoop/hd_space/hbase/tmp</value>
+</property>
+<property>
+		<name>hbase.rootdir</name> //hbase存储的集群跟路径，系统会自动创建
+		<value>hdfs://namenode:9000/hbase</value>
+</property> 
+<property>
+		<name>hbase.zookeeper.quorum</name> //和上面定义的false相呼应，列出安装的zookeeper的机器
+		<value>namenode,datanode1,datanode2</value>
+</property>
+
+regionservers
+namenode
+datanode1
+datanode2
+列出了所有的可用机器
+
+如果你还要更负责的配置信息，请去相应的文件路径下找到对应的default的文件，里面有对应的英文介绍，可相应添加
+
+简单配置好的hbase，可分别远程拷贝到对应的分布式集群上
+
+为了操作简单，将当前的hbase的bin添加到相应的环境路径下
+#set hbase
+export HBASE_HOME=/usr/local/hadoop-2.5.1/hbase-0.99.2
+export PATH=$PATH:$HBASE_HOME/bin
+
+然后在主服务器上可以启动hbase了
+start-hbase.sh
+一般的启动顺序是：hadoop，zookeeper，hbase
+会看到相应的hbase启动进程，可测试
+>hbase shell
+进入到hbase的操作命令中
+
+在测试过程中可能有会出现错误，比如说是namespace不一致，或者是无法连接到namenode的socket的错误
+一般的解决方法是:可能是你没有正确格式化namenode的原因，或者是hbase的目录没有给对相应的权限
+create 'htest','hb';
+list
+put 'htest','row1','hb:a','value1'
+put 'htest','row2','hb:b','value2'
+
+scan 'htest'
+
+get 'htest','row1'
+
+disable 'htest'
+drop 'htest'
+exit
+
+
+
+
+我暂时的安装环境如下：（linus的路径拷贝
+[hadoop@namenode hadoop-2.5.1]$ ls
+apache-hive-0.14.0-bin  hbase-0.99.2  libexec      NOTICE.txt  share
+bin                     include       LICENSE.txt  README.txt  zookeeper-3.4.6
+etc                     lib           logs         sbin        zookeeper.out
+
+
+五 pig的安装
+pig是非常有必要存在的架构，它做的主要就是我们常说的数据清洗ETL工具，对hdfs的文件进行数据整合，然后供hive使用
+
+pig的安装不需要再hadoop的每个节点都安装，只需要在提交pig任务的客户机上安装即可
+pig的安装相对简单，只是解压和简单的修改，我的版本是：/usr/local/hadoop-2.5.1/pig-0.14.0
+pig为了识别hadoop和使用hdfs的功能，需要在环境变量中添加
+#set pig
+export PIG_HOME=/usr/local/hadoop-2.5.1/pig-0.14.0
+export PATH=$PATH:$PIG_HOME/bin
+前提是你已设置hadoop的环境变量
+到目前为止我的namenode的环境变量如下
+#set java
+export JAVA_HOME=/usr/lib/jvm/java
+export JRE_HOME=$JAVA_HOME/jre
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+
+#set hadoop
+export HADOOP_HOME=/usr/local/hadoop-2.5.1
+export HADOOP_CONF_DIR=/usr/local/hadoop-2.5.1/etc/hadoop
+export YARN_CONF_DIR=/usr/local/hadoop-2.5.1/etc/hadoop
+export PATH=$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$PATH
+
+#set hive
+export HIVE_HOME=/usr/local/hadoop-2.5.1/apache-hive-0.14.0-bin
+export PATH=$PATH:$HIVE_HOME/bin
+
+#set zookeeper
+export ZOOKEEPER_HOME=/usr/local/hadoop-2.5.1/zookeeper-3.4.6
+export PATH=$PATH:$ZOOKEEPER_HOME/bin
+
+#set hbase
+export HBASE_HOME=/usr/local/hadoop-2.5.1/hbase-0.99.2
+export PATH=$PATH:$HBASE_HOME/bin
+
+#set pig
+export PIG_HOME=/usr/local/hadoop-2.5.1/pig-0.14.0
+export PATH=$PATH:$PIG_HOME/bin
+
+为了pig的自定义功能和自定义配置，根据自己的机器来设置对应的属性
+/usr/local/hadoop-2.5.1/pig-0.14.0/conf在这个路径里如果有pig.properties则修改，没有的话在源码中找到并拷贝
+我修改的地方主要是：
+pig.logfile=/home/hadoop/hd_space/pig/log/
+pig.user.cache.location=/home/hadoop/hd_space/pig/tmp/
+
+其他的配置你可以参考文档自己设定需要的配置和信息
+然后就是进入pig的操作
+为了简单操作，我们进入pig的本地模式进行测试
+[hadoop@namenode conf]$ pig -x local
+
+
+
+六 sqoop的安装
+sqoop是我们更要拥有的架构工具，它是架通hdfs和sql数据的桥梁，它可以将我们平时数据库的文件连接到hdfs上，供分布式操作和进一步分析使用
+还有就是我们经过etl和hive或者分布式计算后重新整合的数据导出到数据库上，共企业应用使用
+
+首先我使用的版本是：sqoop-1.99.4-bin-hadoop200
+解压完后我的路径是：/usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200
+sqoop是分服务端和客户端的，我选择的是再namenode节点放置我的服务端，测试用，看自己的设置
+解压缩后第一步就是给sqoop设置环境变量
+vi /etc/profile
+#set sqoop
+export SQOOP_HOME=/usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200
+export PATH=$PATH:$SQOOP_HOME/bin
+export CATALINA_BASE=$SQOOP_HOME/server
+export LOGDIR=$SQOOP_HOME/logs/
+
+然后就是我们重要的配置开始，修改配置文件
+vim $SQOOP_HOME/server/conf/catalina.properties
+在这个文件中我们要做大量的修改，主要是加载文件包，在文件中找到common.loader，在其后添加hadoop相关jar包路径
+前面的包位置不要动，只是修改后面关于hadoop的，添加的包内容如下，只是你添加的时候每个包后面有,分隔，写在一行
+/usr/local/hadoop-2.5.1/share/hadoop/common/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/common/lib/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/hdfs/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/hdfs/lib/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/mapreduce/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/mapreduce/lib/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/tools/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/tools/lib/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/yarn/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/yarn/lib/*.jar
+/usr/local/hadoop-2.5.1/share/hadoop/httpfs/tomcat/lib/*.jar 
+还有一个要注意的，上面的hadoop对应jar的路径必须是全路径，不能用变量替换，否则出错
+
+vim $SQOOP_HOME/conf/sqoop.properties
+在这个文件中我们修改的主要是读取hadoop配置的内容
+org.apache.sqoop.submission.engine.mapreduce.configuration.directory=/usr/local/hadoop-2.5.1/etc/hadoop/
+
+简单的配置已经完成，可以启动服务看下
+启动之前要做的事情就是对sqoop/bin这个目录付权限，用来可执行的操作
+chmod 777 ./bin
+sqoop.sh server start
+启动的信息如下：
+[hadoop@namenode logs]$ sqoop.sh server start
+Sqoop home directory: /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200
+Setting SQOOP_HTTP_PORT:     12000
+Setting SQOOP_ADMIN_PORT:     12001
+Using   CATALINA_OPTS:       
+Adding to CATALINA_OPTS:    -Dsqoop.http.port=12000 -Dsqoop.admin.port=12001
+Using CATALINA_BASE:   /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200/server
+Using CATALINA_HOME:   /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200/server
+Using CATALINA_TMPDIR: /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200/server/temp
+Using JRE_HOME:        /usr/lib/jvm/java/jre
+Using CLASSPATH:       /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200/server/bin/bootstrap.jar
+为了确认启动是否成功，查看tomcat的启动日志
+cat $SQOOP_HOME/server/logs/catalina.out
+发现有错误，主要是log4j的错误，检查半天，发现sqoop的版本和hadoop的版本冲突，果断删除sqoop里面的log4j的jar包
+对应位置在$SQOOP_HOME/server/webapps/sqoop/WEB-INF/lib
+
+然后再启动sqoop的服务端，查看日志，没有错误
+为了检验是否真的启动，直接在本机进入客户端测试
+进入/usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200/bin
+./sqoop2-shell 
+显示如下信息：
+[hadoop@namenode bin]$ ./sqoop2-shell 
+Sqoop home directory: /usr/local/hadoop-2.5.1/sqoop-1.99.4-bin-hadoop200
+Apr 05, 2015 7:00:06 AM java.util.prefs.FileSystemPreferences$1 run
+INFO: Created user preferences directory.
+Sqoop Shell: Type 'help' or '\h' for help.
+
+然后进行sqoop的命令操作，查看版本信息
+sqoop:000> show version -all
+
+如果想使用sqoop的服务，要在sqoop的客户端交互上设置服务
+sqoop:000> set server --host 192.168.86.130 --port 12000 --webapp sqoop
+Server is set successfully
+sqoop:000> 
+
+查看当前的连接信息
+sqoop:000> show connector -all
+2 connector(s) to show: 
+Connector with id 1:
+  Name: hdfs-connector 
+  Class: org.apache.sqoop.connector.hdfs.HdfsConnector
+  Version: 1.99.4
+  Supported Directions FROM/TO
+    link config 1:
+      Name: linkConfig
+      Label: Link configuration
+      Help: Here you supply information necessary to connect to HDFS
+      Input 1:
+创建对jdbc的连接
+sqoop:000> show connector
++----+------------------------+---------+------------------------------------------------------+----------------------+
+| Id |          Name          | Version |                        Class                         | Supported Directions |
++----+------------------------+---------+------------------------------------------------------+----------------------+
+| 1  | hdfs-connector         | 1.99.4  | org.apache.sqoop.connector.hdfs.HdfsConnector        | FROM/TO              |
+| 2  | generic-jdbc-connector | 1.99.4  | org.apache.sqoop.connector.jdbc.GenericJdbcConnector | FROM/TO              |
++----+------------------------+---------+------------------------------------------------------+----------------------+
+id对应你要创建类型的连接
+sqoop:000> create link --cid 2
+Creating link for connector with id 2
+Please fill following values to create new link object
+Name: firstjdbc
+
+Link configuration
+
+JDBC Driver Class: com.mysql.jdbc.Driver
+JDBC Connection String: jdbc:mysql://192.168.86.135:3306/sqoop
+Username: sqoop
+Password: *****
+JDBC Connection Properties: 
+There are currently 0 values in the map:
+entry# protocol=tcp
+There are currently 1 values in the map:
+protocol = tcp
+entry# 
+New link was successfully created with validation status OK and persistent id 2
+sqoop:000> 
+
+
+七spark的安装
+spark的存在是我们加速的分布式计算，它是迭代算法的分布式内存实现，它是scala语言的实现，快速的分布式计算方法
+
+首先是安装scala，我使用的版本是：scala-2.11.4，路径为：/home/hadoop/scala-2.11.4，为了hadoop的区分
+然后就是添加环境变量：
+#set scala
+export SCALA_HOME=/home/hadoop/scala-2.11.4
+export PATH=$PATH:$SCALA_HOME/bin
+
+检验是否成功
+[hadoop@namenode scala-2.11.4]$ scala -version
+Scala code runner version 2.11.4 -- Copyright 2002-2013, LAMP/EPFL
+
+安装后首先做下单机测试：
+安装spark，我用的版本是：spark-1.2.0-bin-hadoop2.4
+到目前为止，我的hadoop起群信息的文件如下：
+[hadoop@namenode hadoop-2.5.1]$ ls
+apache-hive-0.14.0-bin  include      NOTICE.txt  spark-1.2.0-bin-hadoop2.4
+bin                     lib          pig-0.14.0  sqoop-1.99.4-bin-hadoop200
+etc                     libexec      README.txt  zookeeper-3.4.6
+hadoop-data             LICENSE.txt  sbin        zookeeper.out
+hbase-0.99.2            logs         share
+将解压好的spark的path添加的环境变量中
+#set spark
+export SPARK_HOME=/usr/local/hadoop-2.5.1/spark-1.2.0-bin-hadoop2.4
+export PATH=$PATH:$SPARK_HOME/bin
+简单测试：MASTER告诉spark运行的local模式，执行对应的shell语言，我采用的是单线程模式，你可以采用多线程处理方法：local[4]四线程
+[hadoop@namenode spark-1.2.0-bin-hadoop2.4]$ MASTER=local ./bin/spark-shell
+Spark assembly has been built with Hive, including Datanucleus jars on classpath
+15/04/06 22:09:40 INFO spark.SecurityManager: Changing view acls to: hadoop
+15/04/06 22:09:40 INFO spark.SecurityManager: Changing modify acls to: hadoop
+15/04/06 22:09:40 INFO spark.SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: Set(hadoop); users with modify permissions: Set(hadoop)
+15/04/06 22:09:40 INFO spark.HttpServer: Starting HTTP Server
+15/04/06 22:09:40 INFO server.Server: jetty-8.y.z-SNAPSHOT
+15/04/06 22:09:40 INFO server.AbstractConnector: Started SocketConnector@0.0.0.0:60979
+15/04/06 22:09:40 INFO util.Utils: Successfully started service 'HTTP class server' on port 60979.
+Welcome to
+      ____              __
+     / __/__  ___ _____/ /__
+    _\ \/ _ \/ _ `/ __/  '_/
+   /___/ .__/\_,_/_/ /_/\_\   version 1.2.0
+      /_/
+
+Using Scala version 2.10.4 (OpenJDK 64-Bit Server VM, Java 1.7.0_75)
+Type in expressions to have them evaluated.
+Type :help for more information.
+15/04/06 22:10:02 INFO spark.SecurityManager: Changing view acls to: hadoop
+15/04/06 22:10:02 INFO spark.SecurityManager: Changing modify acls to: hadoop
+15/04/06 22:10:02 INFO spark.SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: Set(hadoop); users with modify permissions: Set(hadoop)
+15/04/06 22:10:04 INFO slf4j.Slf4jLogger: Slf4jLogger started
+15/04/06 22:10:04 INFO Remoting: Starting remoting
+15/04/06 22:10:05 INFO Remoting: Remoting started; listening on addresses :[akka.tcp://sparkDriver@namenode:47156]
+15/04/06 22:10:05 INFO util.Utils: Successfully started service 'sparkDriver' on port 47156.
+15/04/06 22:10:05 INFO spark.SparkEnv: Registering MapOutputTracker
+15/04/06 22:10:05 INFO spark.SparkEnv: Registering BlockManagerMaster
+15/04/06 22:10:05 INFO storage.DiskBlockManager: Created local directory at /tmp/spark-local-20150406221005-e25b
+15/04/06 22:10:06 INFO storage.MemoryStore: MemoryStore started with capacity 267.3 MB
+15/04/06 22:10:07 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+15/04/06 22:10:08 INFO spark.HttpFileServer: HTTP File server directory is /tmp/spark-27530f81-7930-41d0-af83-4a04f2c78180
+15/04/06 22:10:08 INFO spark.HttpServer: Starting HTTP Server
+15/04/06 22:10:08 INFO server.Server: jetty-8.y.z-SNAPSHOT
+15/04/06 22:10:08 INFO server.AbstractConnector: Started SocketConnector@0.0.0.0:55336
+15/04/06 22:10:08 INFO util.Utils: Successfully started service 'HTTP file server' on port 55336.
+15/04/06 22:10:18 INFO server.Server: jetty-8.y.z-SNAPSHOT
+15/04/06 22:10:18 INFO server.AbstractConnector: Started SelectChannelConnector@0.0.0.0:4040
+15/04/06 22:10:18 INFO util.Utils: Successfully started service 'SparkUI' on port 4040.
+15/04/06 22:10:18 INFO ui.SparkUI: Started SparkUI at http://namenode:4040
+15/04/06 22:10:20 INFO executor.Executor: Using REPL class URI: http://192.168.86.130:60979
+15/04/06 22:10:20 INFO util.AkkaUtils: Connecting to HeartbeatReceiver: akka.tcp://sparkDriver@namenode:47156/user/HeartbeatReceiver
+15/04/06 22:10:21 INFO netty.NettyBlockTransferService: Server created on 55663
+15/04/06 22:10:21 INFO storage.BlockManagerMaster: Trying to register BlockManager
+15/04/06 22:10:21 INFO storage.BlockManagerMasterActor: Registering block manager localhost:55663 with 267.3 MB RAM, BlockManagerId(<driver>, localhost, 55663)
+15/04/06 22:10:21 INFO storage.BlockManagerMaster: Registered BlockManager
+15/04/06 22:10:22 INFO repl.SparkILoop: Created spark context..
+Spark context available as sc.
+
+scala> 
+运行hadoop上的数据信息，做简单测试用，首先你要上传一个测试文件到hdfs上
+scala> val textfile = sc.textFile("/mytest/hello.txt")
+读取文件的第一行数据，最后一行就是返回的结果，简单的测试
+scala> textfile.first()
+15/04/06 22:13:56 INFO mapred.FileInputFormat: Total input paths to process : 1
+15/04/06 22:13:57 INFO spark.SparkContext: Starting job: first at <console>:15
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Got job 0 (first at <console>:15) with 1 output partitions (allowLocal=true)
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Final stage: Stage 0(first at <console>:15)
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Parents of final stage: List()
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Missing parents: List()
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Submitting Stage 0 (/mytest/hello.txt MappedRDD[1] at textFile at <console>:12), which has no missing parents
+15/04/06 22:13:57 INFO storage.MemoryStore: ensureFreeSpace(2544) called with curMem=189427, maxMem=280248975
+15/04/06 22:13:57 INFO storage.MemoryStore: Block broadcast_1 stored as values in memory (estimated size 2.5 KB, free 267.1 MB)
+15/04/06 22:13:57 INFO storage.MemoryStore: ensureFreeSpace(1891) called with curMem=191971, maxMem=280248975
+15/04/06 22:13:57 INFO storage.MemoryStore: Block broadcast_1_piece0 stored as bytes in memory (estimated size 1891.0 B, free 267.1 MB)
+15/04/06 22:13:57 INFO storage.BlockManagerInfo: Added broadcast_1_piece0 in memory on localhost:55663 (size: 1891.0 B, free: 267.2 MB)
+15/04/06 22:13:57 INFO storage.BlockManagerMaster: Updated info of block broadcast_1_piece0
+15/04/06 22:13:57 INFO spark.SparkContext: Created broadcast 1 from broadcast at DAGScheduler.scala:838
+15/04/06 22:13:57 INFO scheduler.DAGScheduler: Submitting 1 missing tasks from Stage 0 (/mytest/hello.txt MappedRDD[1] at textFile at <console>:12)
+15/04/06 22:13:57 INFO scheduler.TaskSchedulerImpl: Adding task set 0.0 with 1 tasks
+15/04/06 22:13:57 INFO scheduler.TaskSetManager: Starting task 0.0 in stage 0.0 (TID 0, localhost, ANY, 1301 bytes)
+15/04/06 22:13:57 INFO executor.Executor: Running task 0.0 in stage 0.0 (TID 0)
+15/04/06 22:13:57 INFO rdd.HadoopRDD: Input split: hdfs://namenode:9000/mytest/hello.txt:0+37
+15/04/06 22:13:57 INFO Configuration.deprecation: mapred.tip.id is deprecated. Instead, use mapreduce.task.id
+15/04/06 22:13:57 INFO Configuration.deprecation: mapred.task.id is deprecated. Instead, use mapreduce.task.attempt.id
+15/04/06 22:13:57 INFO Configuration.deprecation: mapred.task.is.map is deprecated. Instead, use mapreduce.task.ismap
+15/04/06 22:13:57 INFO Configuration.deprecation: mapred.task.partition is deprecated. Instead, use mapreduce.task.partition
+15/04/06 22:13:57 INFO Configuration.deprecation: mapred.job.id is deprecated. Instead, use mapreduce.job.id
+15/04/06 22:13:58 INFO executor.Executor: Finished task 0.0 in stage 0.0 (TID 0). 1758 bytes result sent to driver
+15/04/06 22:13:58 INFO scheduler.TaskSetManager: Finished task 0.0 in stage 0.0 (TID 0) in 1114 ms on localhost (1/1)
+15/04/06 22:13:58 INFO scheduler.TaskSchedulerImpl: Removed TaskSet 0.0, whose tasks have all completed, from pool 
+15/04/06 22:13:58 INFO scheduler.DAGScheduler: Stage 0 (first at <console>:15) finished in 1.163 s
+15/04/06 22:13:58 INFO scheduler.DAGScheduler: Job 0 finished: first at <console>:15, took 1.402707 s
+res0: String = hello world hello hadoop word hadoop
+退出spark的本地模式
+scala> exit
+开始进行集群的配置信息，首先是远程拷贝scala到各个几点，然后先配置本地的spark，再拷贝到各个节点
+/usr/local/hadoop-2.5.1/spark-1.2.0-bin-hadoop2.4/conf
+[hadoop@namenode conf]$ mv slaves.template slaves
+[hadoop@namenode conf]$ vi slaves 
+去掉localhost，并添加所有的节点信息
+#localhost
+namenode
+datanode1
+datanode2
+[hadoop@namenode conf]$ mv spark-env.sh.template spark-env.sh
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+storm的单机安装；
+安装storm首先我们要在联网的情况下安装必须的依赖库
+我的系统是centos7，安装命令参考如下：
+1。jdk的安装并设置相应的环境变量
+yum search jdk
+yum install java-1.7.0-openjdk-devel.x86_64
+
+yum search gcc-c++
+yum install gcc-c++.x86_64
+yum install make
+
+检查是否安装成功
+rpm -qa|grep -i gcc-c++
+rpm -qa|grep -i make
+
+yum install uuid.x86_64
+yum install libtool.x86_64
+
+rpm -qa|grep git
+yum search git
+yum install git
+
+wget http://download.zeromq.org/zeromq-4.0.5.tar.gz
+tar -zxvf zeromq-4.0.5.tar.gz 
+cd zeromq-4.0.5
+./configure
+make
+make install
+
+git clone https://github.com/zeromq/jzmq.git
+cd jzmq/
+./autogen.sh 
+./configure 
+make
+make install
+
+Python-2.7.9.tgz
+tar -zxvf Python-2.7.9.tgz
+cd Python-2.7.9
+./configure
+make
+make install
+python -V
+后面的v一定要大写
+
+

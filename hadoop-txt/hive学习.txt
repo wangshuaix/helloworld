@@ -1,0 +1,518 @@
+Running Hive
+	you must have Hadoop in your path OR
+	export HADOOP_HOME=<hadoop-install-dir>
+	you must create /tmp and /user/hive/warehouse (aka hive.metastore.warehouse.dir) and set them chmod g+w in
+		HDFS before you can create a table in Hive
+	$ $HADOOP_HOME/bin/hadoop fs -mkdir /tmp
+	$ $HADOOP_HOME/bin/hadoop fs -mkdir /user/hive/warehouse
+	$ $HADOOP_HOME/bin/hadoop fs -chmod g+w /tmp
+	$ $HADOOP_HOME/bin/hadoop fs -chmod g+w /user/hive/warehouse
+	
+	You may find it useful, though it's not necessary, to set HIVE_HOME
+	$ export HIVE_HOME=<hive-install-dir>
+	
+	Hive by default gets its configuration from <install-dir>/conf/hive-default.xml
+	The location of the Hive configuration directory can be changed by setting the HIVE_CONF_DIR environment variable.
+	Configuration variables can be changed by (re-)defining them in <install-dir>/conf/hive-site.xml
+	Log4j configuration is stored in <install-dir>/conf/hive-log4j.properties
+	Hive configuration is an overlay on top of Hadoop – it inherits the Hadoop configuration variables by default
+	
+	hive> SET mapred.job.tracker=local;
+	
+	The total input size of the job is lower than: hive.exec.mode.local.auto.inputbytes.max (128MB by default)
+	The total number of map-tasks is less than: hive.exec.mode.local.auto.tasks.max (4 by default)
+	The total number of reduce tasks required is 1 or 0
+	
+	DDL Operations
+	hive> CREATE TABLE pokes (foo INT, bar STRING);
+	hive> CREATE TABLE invites (foo INT, bar STRING) PARTITIONED BY (ds STRING);
+	hive> SHOW TABLES;--list of all tables
+	hive> SHOW TABLES '.*s';--lists all the table that end with 's'.
+	hive> DESCRIBE invites;--shows the list of columns
+	
+	hive> ALTER TABLE events RENAME TO 3koobecaf;
+	hive> ALTER TABLE pokes ADD COLUMNS (new_col INT);
+	hive> ALTER TABLE invites ADD COLUMNS (new_col2 INT COMMENT 'a comment');
+	hive> ALTER TABLE invites REPLACE COLUMNS (foo INT, bar STRING, baz INT COMMENT 'baz replaces new_col2');
+	
+	hive> ALTER TABLE invites REPLACE COLUMNS (foo INT COMMENT 'only keep the first column');
+	hive> DROP TABLE pokes;
+	
+	hive> LOAD DATA LOCAL INPATH './examples/files/kv1.txt' OVERWRITE INTO TABLE pokes;
+	
+	NO verification of data against the schema is performed by the load command.
+		If the file is in hdfs, it is moved into the Hive-controlled file system namespace.
+		The root of the Hive directory is specified by the option hive.metastore.warehouse.dir in hive-default.xml. We advise users
+		to create this directory before trying to create tables via Hive.
+	hive> LOAD DATA LOCAL INPATH './examples/files/kv2.txt' OVERWRITE INTO TABLE invites PARTITION (ds='2008-08-15');
+	hive> LOAD DATA LOCAL INPATH './examples/files/kv3.txt' OVERWRITE INTO TABLE invites PARTITION (ds='2008-08-08');
+	
+	The above command will load data from an HDFS file/directory to the table.
+		Note that loading data from HDFS will result in moving the file/directory. As a result, the operation is almost instantaneous
+	hive> LOAD DATA INPATH '/user/myname/kv2.txt' OVERWRITE INTO TABLE invites PARTITION (ds='2008-08-15');
+	
+	hive> SELECT a.foo FROM invites a WHERE a.ds='2008-08-15';
+	
+	hive> INSERT OVERWRITE DIRECTORY '/tmp/hdfs_out' SELECT a.* FROM invites a WHERE a.ds='2008-08-15';
+	
+	hive> INSERT OVERWRITE LOCAL DIRECTORY '/tmp/local_out' SELECT a.* FROM pokes a;
+	
+	hive> FROM invites a INSERT OVERWRITE TABLE events SELECT a.bar, count(*) WHERE a.foo > 0 GROUP BY a.bar;
+	hive> INSERT OVERWRITE TABLE events SELECT a.bar, count(*) FROM invites a WHERE a.foo > 0 GROUP BY a.bar;
+	
+	hive> FROM pokes t1 JOIN invites t2 ON (t1.bar = t2.bar) INSERT OVERWRITE TABLE events SELECT t1.bar, t1.foo, t2.foo;
+	
+	FROM src
+		INSERT OVERWRITE TABLE dest1 SELECT src.* WHERE src.key < 100
+		INSERT OVERWRITE TABLE dest2 SELECT src.key, src.value WHERE src.key >= 100 and src.key < 200
+		INSERT OVERWRITE TABLE dest3 PARTITION(ds='2008-04-08', hr='12') SELECT
+			src.key WHERE src.key >= 200 and src.key < 300
+			INSERT OVERWRITE LOCAL DIRECTORY '/tmp/dest4.out' SELECT src.value WHERE
+			src.key >= 300;
+			
+	hive> FROM invites a INSERT OVERWRITE TABLE events SELECT TRANSFORM(a.foo,a.bar) AS (oof, rab) USING '/bin/cat' WHERE a.ds > '2008-08-09';
+
+	CREATE TABLE u_data (
+		 userid INT,
+		 movieid INT,
+		 rating INT,
+		 unixtime STRING)
+		ROW FORMAT DELIMITED
+		FIELDS TERMINATED BY '\t'
+		STORED AS TEXTFILE;
+
+
+
+hive中的变量和属性：
+	hivevar：可读可写，用户自定义变量
+	hiveconf：可读可写，hive相关的配置信息
+	system：可读可写，java定义的配置信息
+	env：只读，shell环境定义的环境变量
+	以下的操作都是在hive的命令行中：
+		--对变量的设置
+		set env:HOME;
+		env:HOME=/home/thisuser
+		--对变量的输出显示
+		set -v;
+		--set也可对命令行的变量进行赋值
+		set foo;
+		foo=bar;
+		
+		set hivevar:foo;
+		hivevar:foo=bar;
+		--上面定义的变量可以在以后的命令中用对应的变量方式来得到对应的值
+		create table toosll(id int,${hivevar:foo} string);
+		describle toosll;
+		id     int
+		bar    string
+		drop table toosll;
+		
+		--我们可以对hiveconf中的变量进行相应hive的配置显示和变量控制
+		set hiveconf:hive.cli.print.current.db=true;
+		--显示的当前操作的数据库名称，如果要对hive的配置进行操作需要在0.8之后的版本
+		set y;
+		y=5;
+		create table test1(i int);
+		--装载数据
+		select * from test11 where i = ${hiveconf:y};
+
+hive中的一次执行命令，有时需要执行一次hive命令后直接退出hive命令行，可以接受-e的参数来实现
+	hive -e "select * from test1 limit 3";
+	--执行完后直接退出，如果需要静默的展示方式，去掉ok等无用的信息，可以通过-S来开始静默模式
+	hive -S -e "select * from test1 limit 3" > /tmp/myquery
+	cat /tmp/myquery
+	--显示就是我们想要的纯结果内容方式
+	
+	--有时候我们是先书写hive的语法，保存为一个文件，然后执行这个文件来执行，需要通过-f来实现
+	hive -f /home/wangsx/hive/file/myquery1.hql
+	--上面的方式是直接在shell的命令行中执行，如果需要在hive的命令中执行，需要source的方法
+	source /home/wangsx/hive/file/myquery1.hql
+	
+	--简单测试,首先是在hive命令行中创建对应的表结构
+	create table src(s string);
+	--shell命令中创建简单的文件，并用hive命令加载到对应的表中
+	echo "one row" > /tmp/myfile
+	hive -e "load data local inpath '/tmp/myfile' into table src";
+	
+hiverc文件的使用：
+	--通过-i的命令允许用户指定一个文件，当cli启动时自动加载这个文件，hive会在home下找.hiverc的文件，如果有的话则自动执行其内容
+	--下面是$HOME/.hiverc
+	ADD JAR /home/wangsx/hive/jar/custom_hive_extensions.jar
+	set hive.cli.print.current.db=true
+	set hive.exec.mode.local.auto=true
+	--最后一行是鼓励使用本地模式进行操作
+	
+hive命令：
+	--我们不需要退出hive命令就可以执行shell命令，前提是!开始并且以;结束
+	hive>! pwd;
+	--hive中可以直接操作hadoop的命令，只需要把hadoop的明前去掉,并且以;结束
+	hive> dfs -ls / ;
+	--hive中的注释，就是--，后面的内容自动不解析
+	--有时候我们对数据查询时需要清楚的知道每个字段的名称，我们需要这样操作
+	set hive.cli.print.header=true
+	select * from test1 limit 3;
+	
+hive中我们经常用到的类型；
+	--以下面的例子进行操作和说明
+	create table employees(
+		name string,--最常用的类型
+		salary float,--数字类型中的一种，和java有一拼
+		subordinate array<string>,--参照java中的数组学习，里面的内容统一
+		deductions map<sting,float>,--参照java中的map
+		address struct<street:string,city:string,state:string,zip:int>);--最后一种你可以理解为任意的map
+		
+hive中的数据定义：
+	hive中的数据库就是我们对应的一个目录或者是一个命名空间，默认都是default
+	create database mydatabase;
+	--更安全的操作是下面的，创建的同时要判断是否存在
+	create database if not exists mydatabase;
+	--也可以通过show的命令来查看所有的数据库
+	show databases;
+	--在查看的同时可以根据自己的需求过滤一些内容
+	show databases like 't.*';--以t开头的数据库
+	--hive创建的目录是在我们的配置文件中体现的，hive.metastore.warehouse.dir,当然创建的时候也可自己自定义指定
+	create database if not exists mytest1 location '/home/wangsx/hive/file';--指定路径文件会自动创建
+	--在创建数据库的时候可以添加一些常用的备注信息
+	create database if not exists mytest2 with dbproperties('creator'='wangsx','date'='2015-02-27');
+	
+	hive中默认是default的数据库，通过use的命令来改当前的数据信息
+	use mytest1;
+	--我们同样也可以删除数据库，健壮的删除方法如下
+	drop database if exists mytest1;
+	--hive的删除顺序是先删除数据，再删除表，我们也可以一步完成，想sql中的语法
+	drop database if exists mytest1 cascade;
+	
+	创建表的案例：
+	use mytest2;
+	create table if not exists employees(
+		name  string comment 'name',
+		salary  float comment 'money',
+		subordinates  array<string> comment 'names of this',
+		deductions  map<string,float> comment 'name and money',
+		address  struct<street:string,city:string,state:string,zip:int> comment 'address')
+	comment 'description of table'
+	tblproperties ('creator'='me','create-date'='2015-02-27 22:00:00')
+	location '/usr/hive/warehouse/mytest2.db/employees';
+	--我们同样可以查看这个表的详细信息
+	describe extended employees;--也可以跨库查询describe extended mytest2.employees;
+	
+	创建外部表：假设我们的数据存储在分布式系统的/data/stocks路径下
+	create external table if not exists stocks (
+		exchange  string,
+		symbol  string,
+		ymd  string,
+		price_open  float,
+		price_hige  float,
+		price_low float,
+		price_close  float,
+		volume  int,
+		price_adj_close int)
+		row formate delimited fields terminated by ','
+		location '/data/stocks';
+		
+	hive中的分区表，首先不是所有的数据都可以分区，也不是所有的数据都适合分区
+	create table if not exists employees (
+		name string,
+		salary float,
+		subordinates array<string>,
+		deductions map<string,float>,
+		address struct<street:string,city:string,state:string,zip:int>)
+	partitioned by (country string,state string);
+	--首先说明，分区的字段不能再表中体现，否则报错，不信你试下，分区的存储是文件夹的形式在分布式文件上呈现
+	select * from employees where country = 'china' and state = '1000010';
+	--值得注意的是，如果我们的数据量非常大，如果没有指定分区，会触发一个巨大的mapreduce任务，搞不好累垮服务器，我们需要严谨
+	set hive.mapred.mode=strict;--此时的设置严谨分区的查询，有分区没有过滤分区，查询失败
+	set hive.mapred.mode=nonstrict;--恢复原来的情况
+	外部分区表：
+	create table if not exists log_messages(
+		hms int,
+		severity string,
+		server string,
+		process_id int,
+		message string)
+	partitioned by (year int,month int,day int)
+	row format delimited fields terminated by '\t';
+	--其他信息参考外部表的操作
+	
+	hive中我们经常用到的自定义的存储格式：
+	create table if not exists employees (
+		name string,
+		salary float,
+		address string)
+	row format delimited--数据行格式化
+	fields terminated by '\001'--表中字段的分割符
+	collection items terminated by '\002'--数组总的字段分隔符
+	map keys terminated by '\003'--map中key值得分隔符
+	lines terminated by '\n'--行数据的分隔符
+	stored as textfile;--存储的数据格式
+	
+hive修改表
+	alter table log_messages rename to logmsgs;--修改表名
+	
+	alter talbe log_messages add if not exists --增加分区
+		partition (year=2011,month=1,day=1) location '/logs/2011/01/01'
+		partition (year=2011,month=1,day=2) loction '/logs/2011/01/02'
+		partition (year=2011,month=1,day=3) loction '/logs/2011/01/03'
+		……;
+	alter table log_messages drop if exists partition(year=2011,month=12,day=2);--删除分区
+	
+	alter table log_messages change column hms hours_minutes_seconds int
+		comment 'this is hours,minutes,seconds '
+		after serverity;--修改对应的列名，并制定对应的数据类型，放在指定字段的后面
+		
+	alter table log_messages add columns (
+		app_name string comment 'app name',
+		session_id long comment 'the session of user');--对指定的表增加列
+		
+hive的数据操作
+	首先就是要家在对应的数据到指定的表中
+	load data local inpath '${env:HOME}/california-employees'
+	overwrite into table employees
+	partition (country='china',state='ca');--如果分区不存在的话就先创建分区，然后再拷贝数据
+	--local的关键字就是拷贝本地文件到分布式文件系统中，如果用load data这样的方式值转移数据，不是拷贝
+	
+	--通过查询语句插入到另一个表中
+	insert overwrite table employees
+	partition (country='china',state='or')
+	select * from staged_employess se
+	where se.city='china' and se.st='or';
+	--使用overwrite就是将之前分区中的内容覆盖掉，如果没有overwrite而是into的话就是以追加的形式
+	--我们还可以同时插入多个分区数据
+	from staged_employess se
+	insert overwrite table employees
+		partition (country='china',state='ca')
+		select * where se.cnty='china' and se.st='ca'
+	insert overwrite table employees
+		partition (country='china',state='or')
+		select * where se.cnty='china' and se.st='or'
+	insert overwrite table employees
+		partition (country='china',state='il')
+		select * where se.cnty='china' and se.st='il';
+		
+	--如果我们有很多分区，那么我就用上面的方法就会非常的麻烦，于是我们就可以用动态分区插入的方法
+	insert overwrite table employees
+	partition (country,state)
+	select ……,se.cnty,se.st from staged_employees se;--就是根据查询语句的最后两个的值来动态的插入不同的分区，查询的顺序很重要
+	
+	--当然我们也可以混合使用静态和动态分区的方法，需要注意的是静态的一定要在动态的前面
+	insert overwrite table employees
+	partition (country='china',state)
+	select ……,se.cnty,se.st from staged_employees se where se.cnty='china';
+	
+	--当然默认情况是没有开启动态分区插入的，需要我们手动开启
+	set hive.exec.dynamic.partition=true;--设置true是开启分区功能
+	set hive.exec.dynamic.partition.mode=nonstrict;--允许所有分区都是动态的
+	set hive.exec.max.dynamic.partitions.pernode=1000;--每个map和redurce可以创建的最大动态分区个数，超过会报错
+	
+	--有时候我们需要类似sql中的临时表，一天语句即使创建表有时加载数据
+	create table if not exists ca_employees
+	as select name,salary,address from employees where state = 'ca';
+	
+hive最重要的语句功能
+	--在select语句中我们应该经常使用聚合函数，在使用聚合函数是为了提高性能，我们会如下
+	set hive.map.arrg=true;
+	select count(*),avg(salary) from employees;--触发map阶段的顶级聚合过程，非顶级的聚合需要group by
+	select count(distinct symbol) from employees;
+	--需要注意的是hive中不允许多于一个（distinct……）的函数操作，不信你试下
+	
+	--需要注意的特殊函数，表生成函数
+		explode(array) 生成0到多个结果，每行都是对应输入的array的元素
+		select explode(subordinates) as sub from employees;--当使用表生成函数时需要指定别名，hive的要求
+		还有很多的函数：
+		explode(map),explode(array<type> a),……
+		
+	--limit语句，返回前几天的数据
+	select upper(name),salary,deductions["Federal Taxes"],round(salary-(1-deductions["Federal Taxes"])) from employees limit 2;
+	--同时就想我们使用sql一样支持子查询，建议都取别名来控制语句操作
+	
+	hive的执行在测试实验的时候尽量避免进行mapreduce操作，也就是本地模式
+	set hive.exec.mode.local.auto=true;
+	select * from employees;
+	--下面的数据比较特殊，如果在where的过滤语句中只是分区的字段无论是否使用limit都无需mapreduce的
+	select * from employees where country = 'china' and state = 'ca' limit 100;
+	--为了更好的操作，最好把上面的设置增加到$HOME/.hiverc的配置文件中
+	
+	--group by的使用经常和聚合函数一起使用，熟悉sql的都清楚其作用和功能
+	select year(ymd),avg(price_close) from stocks 
+	where exchange = 'nasdaq' and symbol = 'aapl; group by year(ymd);
+	
+	--having一般使用对聚合函数的结果进行过滤的操作
+	select year(ymd),avg(price_close) from stocks 
+	where exchange = 'nasdaq' and symbol = 'aapl'
+	group by year(ymd)
+	having avg(price_close) > 50.0;
+	
+	--最重要join的操作，不过要注意的是join只支持等值的操作
+	--inner join 只有进行两个表中连接标准相匹配是数据才会保留下来
+	select a.ymd,a.price_close,b.price_close from stocks a join stocks b on a.ymd = b.ymd
+	where a.symbol = 'appl' and b.symbol = 'ibm';
+	--并且需要主要的是再on后面的连接中只支持and，不支持or的操作
+	
+	--join的优化，在使用join是如果我们对多个表进行连接时，我们使用相同的连接键（就是on后面的连接），那么就会产生一个mapreduce
+	--join优化，如果连接的几个表数据量悬殊比较大，此时会非常明显发现，数据量小的表放在前面效率会更快点
+	--hive会把第一表作为驱动表来操作，也不是越大就要放到最后面，根据具体的情况来考虑
+	
+	--左外连接：left outer join 和sql中的表述和功能是一样的
+	--右外连接：right outer join 和sql中的功能是一致的
+	--完全外连接：full outer join 所有表中的数据，没有就是null
+	
+	--左半开连接：left semi-join 返回左边表的数据，前提是其记录对于邮编表满足on语句中的判断条件
+	select s.ymd,s.symbol,s.price_close from stocks s left semi join dividends d on s.ymd = d.ymd and s.symbol = d.symbol;
+	--注意，在select和where中不可以引用右边表的字段，此功能的开发主要是为了类似sql的in语句功能
+	
+	--笛卡儿积 join 和我们在sql中的意义一样
+	select * from stocks join dividends;
+	
+	--优化的操作，如果所有表中只有一张表示小表，则要考虑在map的时候可以全部放置到内存中，hive称为map-side join ,减少redurce的过程
+	select /*+mapjoin(d) */ s.symbol,s.price_close,d.dividends from stocks s join dividends d on s.ymd = d.ymd and s.symbol = d.symbol
+	where s.symbol = 'appl';--在此中是在hive0.7版本之前要加的表示
+	--下面的是hive0.7版本之后的操作，可以加表示，或者开启其优化属性
+	set hive.auto.convert.join=true;
+	select s.symbol,s.price_close,d.dividends from stocks s join dividends d on s.ymd = d.ymd and s.symbol = d.symbol
+	where s.symbol = 'appl';
+	--如果需要这个优化的话，建议在$HOME/.hiverc的文件中添加此配置信息
+	--当然不是所有的连接都适合，右外连接和全外连接时不适合的
+	
+	--order by 和 sort by 
+	order by 和sql的功能是一样的，需要一个全局排序，这时就需要一个reducer来做这个排序操作，对于大数据集就比较缓慢
+	hive还有一自己的方法就是sort by ，它是在每个reducer中都进行自己的局部排序，并非全局排序
+	select s.ymd,s.symbol,s.price_close from stocks s order by s.ymd asc,s.symbol desc;
+	select s.ymd,s.symbol,s.price_close from stocks s sort by s.ymd asc,s.symbol desc;
+	--上面的数据量大，有多个reducer的时候排序就不太一样了，
+	--因为order by 的操作时间较长，如果hive.mapred.mode=strict时，那么必须有limit语句限制，默认情况下nostrict
+	
+	--抽样查询，如果数据量非常大时我们都采用抽样或者是分桶抽样
+	--假设numbers表只有number字段，值是1-10，我们采用rand() 函数来进行抽样
+	select * from numbers tablesample(bucket 3 out of 10 on rand()) s;--此时是随机的抽取，每次的结果可能都不一样
+	select * from numbers tablesample(bucket 3 out of 10 on number) s;--此时是指定字段的抽样，每次结果应该是相同的
+	
+	--数据块的抽样，此方法的最小数据块是一个hdfs的数据块大小，如果小于则返回所有数字
+	select * from numbersflat tablesample(0.1 percent) s;
+	
+hive视图的操作
+	--有时候我们用视图的时候都是在用子查询，hive支持多层的子查询
+	--使用视图是为了基于条件过滤的数据
+	create view safer_userinfo_view as select firstname,lastname from userinfo;
+	
+	--更好的创建视图方法
+	create view if not exists shipments(time,part) as select …… ;
+	
+	--删除视图
+	drop view if exists shipments;
+	
+hive索引
+	--我们一般是对分区字段进行创建索引
+	create index employees_index
+	on table employees(country)
+	as 'org.apache.hadoop.hive.hql.index.compact.CompactIndexHandler'
+	with deferred rebuild
+	in table employees_index_table
+	partition by (country,state);
+	--如果我们丢掉原始表中的partition的话，那么索引将会包含原始表中的所有分区
+	--as 是指定了一个索引处理器，也是我们要实现的索引接口的java类
+	
+	--bitmap索引
+	create view employees_index
+	on table employees(country)
+	as 'BITMAP'
+	with deferred rebuild
+	in table employees_index_table
+	partition by (country,state);
+	
+	--重建索引
+	alter index employees_index
+	on table employees
+	partition (country = 'china')
+	rebuild;
+	
+	--删除索引
+	drop index if exists employees_index on table employees;
+	
+hive的设计
+	--有时候我们会遇见按天划分的表，每天的数据量都是非常的大，这是我们首先想到的是hive中的分区表
+	create table supply (id int,part string,quertity int) partition by (day int);
+	alter table supply add partition (day=20110102);
+	select * from supply where day >= 20110102 and day <= 20110103;
+	
+	--分区不是创建的越多越好，如果创建了很多的分区，对某些查询也是不利的
+	create table weblogs (url string,time long)
+	partition by (day int,state sting,city string);
+	select * from weblogs where day = 20110102;
+	--一个分区就对应一个文件夹，如果每个表都有好几百个分区，那么就要创建好几万个文件夹
+	
+	--惟一键和标准化
+	create table employees (
+		name string,
+		salary float,
+		subordinates array<string>,
+		deductions map<string,float>,
+		address struct<street:string,city:string,state:string,zip:int>);
+	--一般我们会用第一个键位主键，要保证第一个是唯一性
+	
+	--同一份数据的多种处理方式
+	insert overwrite table sales select * from history where action ='purchased';
+	insert overwrite table credits select * from history where action = 'returned';
+	--上面的语句会扫描2次history表，效率比较低，为了提高效率，要保证只扫描一次
+	from history
+		insert overwrite sales select * where action = 'purchased'
+		insert overwrite credits select * where action = 'returned';
+		
+	--合理利用每个表的分区
+	hive -hiveconf dt=2011-01-01
+	insert overwrite table distinct_ip_in_logs
+		partition (hit_date=${dt})
+		select distinct(ip) as ip from weblogs
+		where hit_date = '${hiveconf:dt}';
+	create table state_city_for_day (state string,city string)
+		partition by (hit_date string);
+	insert overwrite table state_city_for_day partition(${hiveconf:dt})
+		select distinct(state,city) from distinct_ip_in_logs
+		join geodata on (distinct_ip_in_logs.ip = geodata.ip)
+		where (hit_date = '${hiveconf:dt}');
+		
+	--分桶的设置
+	create table weblog (user_id int,url string,source_ip string)
+		partition by (dt string)
+		clustered by (user_id string) into 96 buckets;
+	--同一user_id下的记录通常存储到同一个桶内
+	
+	--去重数据
+	select distinct(state) from weblogs;
+	
+hive 调优
+	--学习hive是如何工作的之后第一步就是要学习explain功能，慢慢学习hive的调优工作
+	--思考下面的例子
+	describe onecol;
+	select * from onecol;
+	select sum(*) from onecol;
+	--然后是看下面的信息
+	explain select sum(*) from onecol;
+	
+	explain extended 会输出更多的信息
+	
+	--启动本地模式
+	set old_job = ${hiveconf:mapred.job.tracker};
+	set mapred.job.tracker=local;
+	
+	--并行执行
+	hive.exec.parallel为true时就开启并发执行
+	
+	--开启中间压缩
+	hive.exec.compress.intermediate为true时，然后就是要指定中间压缩的类
+	
+	--最终结果压缩
+	hive.exec.compress.output
+	hive.output.compression.codec
+	
+	--测试数据的展示
+	set hive.exec.compress.intermediate = true;
+	create table intermediate_tmp
+		row format delimited fields terminated by '\t'
+		as select * from a;
+	--最终的结果还是一样的，
+	
+	set hive.exec.compress.output = true;
+	set mapred.output.compression.codec = org.apache.hadoop.io.compress.GzipCodec;
+	create table final_tmp
+		row format delimited fields terminated by '\t'
+		as select * from a;

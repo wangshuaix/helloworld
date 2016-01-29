@@ -1,0 +1,159 @@
+1.pig是hadoop的并行执行数据流处理的引擎，pig是基于hadoop的
+	--pig对数据统计的demo
+	input = load 'inputpath' as (line);
+	words = foreach input generate flatten(TOKENIZE(line)) as word;
+	grpd = group words by word;
+	cntd = foreach grpd generate group,COUNT(words);
+	dump cntd;
+	
+	--pig对数据的统计使用
+	users = load 'users' as (name,age);
+	fltrd = filter users by age >= 18 and age <= 25;
+	pages = load 'pages' as (user,url);
+	jnd = join fltrd by name,pages by user;
+	grpd = group jnd by url;
+	smmd = foreach grpd generate group,COUNT(jnd) as clicks;
+	srtd = order smmd by clicks desc;
+	top5 = limit srtd 5;
+	store top5 into 'toppath';
+	
+2.pig是不需要安装在hadoop集群中，它是运行在用户提交hadoop任务的那台机器上。
+	如果是在单机上运行则解压后可以直接运行，并且在操作上要执行pig -x local
+	如果是集群模式则要告诉pig集群的信息
+	
+	--pig的数据类型：
+	int，long，float，double，chararray(字符串),bytearray
+	--pig的复杂类型：
+	map，tuple：定长的数据集合，bag：无序的tuple集合
+	
+	--pig加载数据的时候需要知道模式，并在在加载后的数据中对字段的引用可以根据位置来调用，从0开始
+	--在pig中我们>是对数值型，chararray，bytearray都是合法的操作
+	--pig中的类型转换和java中的数据类型转换是一样的，毕竟它的底层都是java实现的
+
+3.pig的数据处理：
+	--输入和输出：
+	--加载，第一步就是要指定输入，pig中使用的默认加载函数是PigStorage加载存放在hdfs中的数据
+	divds = load '/data/example/nyds-datas'
+	--默认情况下是在用户的hdfs的用户目录下执行找，这就是使用相对路径，当然用户也可以指定一个完整的路径来加载数据
+	
+	--pig用户可以指定函数来加载不同的数据类型格式，比如加载hbase中的数据
+	dives = load 'inputpath' using HBaseStorage();
+	--如果想读取以逗号分隔的文本文件数据，可以使用PigStorage函数可以接受一个指定的分隔符函数
+	divds = load 'inputpath' using PigStorage(',');
+	
+	--pig也可以在后面使用as来指定加载的数据对应的数据类型字段
+	divds = load 'inputpath' as (exchange,symble,date,dividence);
+	
+	--说明一点在pig中PigStorage和TextLoader是可以操作hdfs的内置pig加载函数
+	
+	--pig对数据处理后的数据存储，使用store来进行数据的写出
+	--默认情况在pig使用的是PigStorage函数，使用制表符来存写数据
+	store datas into '/data/example/datas';
+	pig的写出和数据的加载时一致的，使用的函数的方法一样，参照输入的方法
+	
+4.关系操作
+	--foreach，接受的是一组表达式，然后再数据管道中将它们应用到每条记录中
+	--比如，对于很多记录的数据只保留user和id字段
+	a = load 'inputpath' as (user:chararray,id:long,address:chararray,phone:chararray,prefers:map[]);
+	b = foreach a generate user,id;
+	--foreach支持大量的表达式，最常用的就是常量和字段的引用，也有用位置引用的，是$从0开始的
+	prices = load 'inputpath' as (exchange,symbol,date,open,high,low,close,volume,adj_close);
+	gain = foreach prices generate close - open;
+	gain2 = foreach prices generate %6 - $3;
+	--foreach还支持区间的应用，..的应用
+	beginning = foreach prices generate open..close;--解释的就是从open开始到close的位置上所有的字段内容
+	
+	--null值对所有的算术操作符都是抵消的，不管什么和null进行操作返回的都是null
+	--foreach支持的操作还是三元表达式
+	a = load 'inputdata' as (x:chararray,y:int,z:int);
+	a1 = foreach a generate x,y + z as yz;
+	b = group a1 by x;
+	c = foreach b generate sum(a1.yz);
+	
+	--foreach中的UDF函数
+	divs = load 'inputdata' as (exchange,symbol,date,dividends);
+	upped = foreach divs generate UPPER(symbol) as symbol,dividences;
+	grpd = group upped by symbol;
+	sums = foreach grpd generate group,SUM(upped.dividences);
+	
+	--filter是用户可以选择将那些数据保留到用户的数据流里，filter里包含了一个断言，如果true时则保留下去
+	--判断的符号：==,!=,>,>=,<=等可以应用到基本数据类型，==和!=也可以应用到map和tuple这样的复杂类型中
+	divs = load 'inputdata' as (exchange:chararray,symbol:chararray,date:chararray,dividends:float);
+	matches = filter divs by symbol matches 'CM.*';
+	--从上面可以看出同样支持正则表达式，如果是相反的操作可以加上no来操作
+	matchesdemo = filter divs by no symbol matches 'CM.*';
+	--当然在操作符后面的表达式中我们也可以组合使用多个表达式同时进行如，and或者or的操作
+	--同样需要注意的是null的操作，对于任何表达式，null既不会匹配也不会失败
+	
+	
+	--group是可以把相同的键聚合在一起，这个和sql中的作用是相同的
+	daily = load 'inputdata' as (exchange,stock);
+	grpd = group daily by stock;
+	cnt = foreach grpd generate group,COUNT(daily);
+	--group by语句输出的结果包含两个字段，一个是键，另一个是包含了集聚了记录的bag数据
+	--group all的输出的键是all。其他的都是一样的操作
+	--group是会触发一个reduce过程的操作符
+	--group处理null和sql处理null是一样的，也会将null作为键保存到后面的数据中
+	
+	--order by语句是对输出的结果进行排序的操作，产生一个全排序的输出结果
+	a = load 'inputdata' as (exchage:chararray,symbol:float,date:chararray);
+	b = order a by date;
+	--排序和sql的操作是一样的，支持正序和倒序的操作，这样和sql的语法是完全一样的。
+	--还有一个就是order会触发一个reduce的过程
+	
+	
+	--distinct语句非常简单，它将重复值去掉
+	daily = load 'inputdata' as (exchange:chararray,symbol:chararray);
+	unip = distinct daily;
+	--需要注意的是所有distinct会触发一个redurce处理过程
+	
+	--join是在pig中经常要用到的数据处理方法，类似sql的表连接
+	daily = load 'input' as (exchange,symbol,date,open,high,low,close,volume,adj_close);
+	divs = load 'input' as (exchange,symbol,date,dividends);
+	jnd = join daily by symbol,divs by symbol;
+	--上面是对单一字段的相等连接，如果是对多个字段进行登记连接的时候如下
+	jnd = join daily by (symbol,date),divs by (symbol,date);
+	
+	--和sql一样，我们的pig也是支持外连接的操作，outer join也是分为left，right，full3中形式
+	--同样也是支持自连接的操作
+	divs1 = load 'inout' as (exchange:chararray,symbol:chararray,date:chararray,dividends);
+	divs2 = load 'inout' as (exchange:chararray,symbol:chararray,date:chararray,dividends);
+	jnd = join divs1 by symbol,divs2 by symbol;
+	incressed = filter jnd by divs1::date < divs2::date 
+		and divs1::dividends < divs2::dividends;
+		
+	--limit的操作，用户只是想从结果中显示几条数据来显示
+	a = load 'input' as (exchange,symbol);
+	top10 = limit a 10;
+	--需要注意的是limit会产生一个额外的reduce的过程，它需要对多有的记录进行挑选，然后输出
+	--当limit和order同时使用时，在map和reduce过程会同时执行
+	
+	
+	--sample语法提供一种抽取样本的方法，它会读取数据的一个百分比的数据，可以通过一个0到1的一个double值的比例
+	divs = load 'input';
+	some = sample divs 0.1;--10%的数据
+	--这只是一个简单的抽样方法，并且每次的抽样都是不尽相同的，实际上他的方法被重写为filter a by random() <= 0.1;
+	
+	--parallel可以附加到pig语言中每个操作符的后面，它会控制reduce阶段的并行处理，因此只有可以触发reduce的操作才有意义
+	--可以触发reduce过程的操作有：group，order,distinct,join,cogroup,cross，特别声明在本地模式parallel会被忽略
+	daily = load 'input' as (exchange,symbol,date,open,high,low,close,volume,adj_close);
+	bysymbol = group daily by symbol parallel 10;
+	
+5.自定义函数udf
+	--注册udf，register命令来完成
+	register 'your path/piggybank.jar';
+	divs = load 'input' as (exchange:chararray,symbol:chararray,date:chararray,dividends:float);
+	backwords = foreach divs generate org.apache.pig.piggybank.evalution.string.Reverse(symbol);
+	
+	--define命令和udf，define命令是为了给用户一个udf的别名，操作简单的函数名
+	register 'your path/piggybank.jar';
+	define reverse org.apache.pig.piggybank.evalution.string.Reverse();
+	divs = load 'input' as (exchange:chararray,symbol:chararray,date:chararray,dividends:float);
+	backwords = foreach divs generate reverse(symbol);
+	
+	--pig也可以调用静态的java函数
+	
+	
+6.pig的高级应用
+	--高级关系操作
+	--foreach的高级功能，
